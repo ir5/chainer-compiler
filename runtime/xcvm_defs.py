@@ -319,9 +319,9 @@ XC_OPS = [
 
     ('LRN',
      [Array('x'), Float('alpha'), Float('beta'), Float('bias'), Int('size')],
-     ['y', 'unit_scale']),
+     ['y', Opaque('unit_scale')]),
     ('LRNGrad',
-     [Array('x'), Array('y'), Array('gy'), Array('unit_scale'),
+     [Array('x'), Array('y'), Array('gy'), Opaque('ctx'),
       Float('alpha'), Float('beta'), Float('bias'), Int('size')], ['gx']),
 
     ('Equal', [Array('a'), Array('b')], ['c']),

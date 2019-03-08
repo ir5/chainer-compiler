@@ -519,8 +519,8 @@ void BatchNormalizationGradFn(GradientOpContext* gc) {
 void LRNGradFn(GradientOpContext* gc) {
     GraphBuilder gb{gc->builder(0)};
     Node* node = gc->node();
-    Value* unit_scale = gc->AddOutput(Type(gc->x(0)->type()));
-    gc->GradOp(Node::kChainerLRNGrad, 0, {gc->x(0), gc->y(0), gc->gy(0), unit_scale})
+    Value* context = gc->AddOutput(Type(Type::Kind::kOpaque));
+    gc->GradOp(Node::kChainerLRNGrad, 0, {gc->x(0), gc->y(0), gc->gy(0), context})
             ->producer()
             ->set_alpha(node->alpha())
             ->set_beta(node->beta())
