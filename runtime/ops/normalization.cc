@@ -37,6 +37,20 @@ private:
     chainerx::Shape x2_shape_;
 };
 
+class LRNBackwardContext : public XCVMOpaque {
+public:
+    LRNBackwardContext(const chainerx::Array& unit_scale) : unit_scale_(unit_scale) {
+    }
+    virtual ~LRNBackwardContext() = default;
+
+    const chainerx::Array& unit_scale() const {
+        return unit_scale_;
+    }
+
+private:
+    chainerx::Array unit_scale_;
+};
+
 // TODO(hamaji): Copied from ChainerX's code.
 using Array = chainerx::Array;
 using Axes = chainerx::Axes;
@@ -173,7 +187,7 @@ std::tuple<chainerx::Array, chainerx::Array, chainerx::Array> BatchNormalization
     return std::forward_as_tuple(gxs[0], gx1, gx2);
 }
 
-std::tuple<chainerx::Array, chainerx::Array> LRNOp::RunImpl(XCVMState* st, const chainerx::Array& x) {
+std::tuple<chainerx::Array, XCVMOpaque*> LRNOp::RunImpl(XCVMState* st, const chainerx::Array& x) {
     int half_n = size / 2;
     chainerx::Array x2 = x * x;
     chainerx::Array sum_part = x2.Copy();
@@ -189,11 +203,18 @@ std::tuple<chainerx::Array, chainerx::Array> LRNOp::RunImpl(XCVMState* st, const
     // TODO(hamaji): Add `Pow` and use it.
     chainerx::Array scale = chainerx::Exp(chainerx::Log(unit_scale) * -beta);
     chainerx::Array out = x * scale;
-    return std::tie(out, unit_scale);
+
+    XCVMOpaque* ctx = new LRNBackwardContext(std::move(unit_scale));
+    if (st->options().dump_memory_usage) {
+        ctx->SetRetainedArrays({x});
+    }
+    return std::tie(out, ctx);
 }
 
 chainerx::Array LRNGradOp::RunImpl(
-        XCVMState* st, const chainerx::Array& x, const chainerx::Array& y, const chainerx::Array& gy, const chainerx::Array& unit_scale) {
+        XCVMState* st, const chainerx::Array& x, const chainerx::Array& y, const chainerx::Array& gy, const XCVMOpaque& ctx) {
+    auto& context = dynamic_cast<const LRNBackwardContext&>(ctx);
+    const chainerx::Array& unit_scale = context.unit_scale();
     int half_n = size / 2;
     chainerx::Array summand = y * gy / unit_scale;
     chainerx::Array sum_part = summand.Copy();
