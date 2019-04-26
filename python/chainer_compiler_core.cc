@@ -50,6 +50,7 @@ std::map<std::string, VarPtr> LoadParams(const std::shared_ptr<Graph>& graph) {
 
 std::shared_ptr<runtime::XCVM> Compile(
         const std::shared_ptr<Graph>& graph,
+        bool backprop,
         bool compiler_log,
         bool permissive,
         bool skip_inference,
@@ -95,8 +96,7 @@ std::shared_ptr<runtime::XCVM> Compile(
 
     if (!g_skip_inference) graph->InferShapes();
 
-    constexpr bool kBackprop = false;
-    RunDefaultPasses(graph.get(), kBackprop);
+    RunDefaultPasses(graph.get(), backprop);
     runtime::XCProgramProto xcvm_prog;
     constexpr bool kDumpValueNames = false;
     xcvm::Emit(*graph, &xcvm_prog, kDumpValueNames);
@@ -175,6 +175,7 @@ void InitGraph(py::module& m) {
     c.def("compile",
           &Compile,
           "Compile a model",
+          py::arg("backprop") = false,
           py::arg("compiler_log") = false,
           py::arg("permissive") = false,
           py::arg("skip_inference") = false,
