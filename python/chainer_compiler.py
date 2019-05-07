@@ -59,7 +59,7 @@ def _from_var(v, device):
     return [_from_var(x, device) for x in v.sequence()]
 
 
-class RunCompiledModel(chainer.function_node.FunctionNode):
+class RunCompiledModelTwoPhase(chainer.function_node.FunctionNode):
 
     def __init__(self, compiled_model, input_tmpl):
         self.fwd_input_names = compiled_model.fwd_input_names
@@ -113,6 +113,7 @@ class RunCompiledModel(chainer.function_node.FunctionNode):
         for output in outputs_and_retained[:self.num_outputs]:
             self.nested_outputs.append(_from_var(output, device))
         flat_outputs = _flatten(self.nested_outputs)
+        print(flat_outputs)
         return tuple(flat_outputs)
 
     def unflatten_outputs(self, flat_outputs):
@@ -162,13 +163,107 @@ class RunCompiledModel(chainer.function_node.FunctionNode):
         return gxs
 
 
+class RunCompiledModelOnePhase(chainer.function_node.FunctionNode):
+
+    def __init__(self, compiled_model, input_tmpl):
+        self.fwd_input_names = compiled_model.fwd_input_names
+        self.fwd_output_names = compiled_model.fwd_output_names
+        self.param_names = compiled_model.param_names
+        self.fwd_bwd = compiled_model.fwd_bwd
+        self.input_tmpl = input_tmpl
+        self.num_inputs = len(_flatten(input_tmpl))
+        self.chainerx_device_name = None
+
+    def _to_var(self, v):
+        # TODO(mkusumoto): Stop copy&paste from two phase implementation
+        if _is_array(v):
+            if isinstance(v, chainer.Variable):
+                v = v.array
+            v = chainer.backend.to_chx(v)
+            if self.chainerx_device_name is None:
+                self.chainerx_device_name = v.device
+            else:
+                assert self.chainerx_device_name == v.device
+            return chainer_compiler_core.value(v)
+        return chainer_compiler_core.value([self._to_var(a) for a in v])
+
+    def forward(self, args):
+        flat_inputs = args[:self.num_inputs]
+        param_values = args[self.num_inputs:]
+        device = chainer.backend.get_device_from_array(*flat_inputs)
+        inputs, i = _unflatten(flat_inputs, self.input_tmpl)
+        assert i == len(flat_inputs)
+
+        entire_inputs = {}
+        assert len(self.fwd_input_names) == len(inputs)
+        for name, value in zip(self.fwd_input_names, inputs):
+            entire_inputs[name] = self._to_var(value)
+        assert len(self.param_names) == len(param_values)
+        for name, value in zip(self.param_names, param_values):
+            entire_inputs[name] = self._to_var(value)
+
+        with chainer.using_device(self.chainerx_device_name):
+            entire_outputs = self.fwd_bwd.run(entire_inputs)
+        print(entire_outputs['grad_out@param_l1_b'])
+        forward_outputs = [entire_outputs[name] for name
+                           in self.fwd_output_names]
+
+        # TODO(hamaji): Do not hold actual arrays.
+        self.nested_outputs = [_from_var(output, device) for output
+                               in forward_outputs]
+        flat_outputs = _flatten(self.nested_outputs)
+
+        self._summarize_gradients(entire_outputs, device)
+
+        return tuple(flat_outputs)
+
+    def unflatten_outputs(self, flat_outputs):
+        outputs, _ = _unflatten(flat_outputs, self.nested_outputs)
+        return outputs
+
+    def _summarize_gradients(self, entire_outputs, device):
+        # TODO(mkusumoto): Stop copy&paste from one phase impl
+        gxs = []
+        assert len(self.input_tmpl) == len(self.fwd_input_names)
+        for name, tmpl in zip(self.fwd_input_names, self.input_tmpl):
+            grad_name = 'grad_out@' + name
+            if grad_name in entire_outputs:
+                gx = _from_var(entire_outputs[grad_name], device)
+                if _is_array(tmpl):
+                    gxs.append(gx)
+                else:
+                    assert len(gx) == len(tmpl)
+                    gxs.extend(_flatten_structured(gx, tmpl))
+            else:
+                gxs.extend([None] * len(_flatten(tmpl)))
+
+        for name in self.param_names:
+            grad_name = 'grad_out@' + name
+            if grad_name in entire_outputs:
+                gx = _from_var(entire_outputs[grad_name], device)
+                gxs.append(gx)
+            else:
+                gxs.extend([None])
+
+        gxs = tuple(None if gx is None else gx for gx in gxs)
+        self.retained_grads = gxs
+
+    def backward(self, indexes, flat_gys):
+        # print([type(g)
+        # for g in self.retained_grads])
+        return tuple(None if g is None else chainer.Variable(g)
+                     for g in self.retained_grads)
+
+
 class CompiledModel(chainer.Chain):
 
-    def __init__(self, model, inputs, translator='ch2o', dump_onnx=False):
+    def __init__(self, model, inputs, translator='ch2o',
+                 backprop_two_phase=True, dump_onnx=False):
         super(CompiledModel, self).__init__()
         with self.init_scope():
             self.mc = model
         self.translator = translator
+        self.backprop_two_phase = backprop_two_phase
         self.dump_onnx = dump_onnx
 
         self.compiled = False
@@ -198,25 +293,35 @@ class CompiledModel(chainer.Chain):
 
         self.orig_output_names = graph.output_names()
 
-        # fwd_graph, bwd_graph = graph.backward_to(graph.input_names())
-        fwd_graph, bwd_graph = graph.backward_to(
-            graph.input_names() + graph.param_names())
-        if self.dump_onnx:
-            sys.stderr.write('=== vvv forward vvv ===\n' +
-                             fwd_graph.dump() +
-                             '\n=== ^^^ forward ^^^ ===\n')
-            sys.stderr.write('=== vvv backward vvv ===\n' +
-                             bwd_graph.dump() +
-                             '\n=== ^^^ backward ^^^ ===\n')
+        if self.backprop_two_phase:
+            fwd_graph, bwd_graph = graph.backward_to(
+                graph.input_names() + graph.param_names())
+            if self.dump_onnx:
+                sys.stderr.write('=== vvv forward vvv ===\n' +
+                                 fwd_graph.dump() +
+                                 '\n=== ^^^ forward ^^^ ===\n')
+                sys.stderr.write('=== vvv backward vvv ===\n' +
+                                 bwd_graph.dump() +
+                                 '\n=== ^^^ backward ^^^ ===\n')
+        else:
+            fwd_graph = graph
+            if self.dump_onnx:
+                sys.stderr.write('=== vvv forward vvv ===\n' +
+                                 fwd_graph.dump() +
+                                 '\n=== ^^^ forward ^^^ ===\n')
 
         assert graph.input_names() == fwd_graph.input_names()
         self.fwd_input_names = fwd_graph.input_names()
         self.fwd_output_names = fwd_graph.output_names()
-        self.bwd_input_names = bwd_graph.input_names()
-        self.bwd_output_names = bwd_graph.output_names()
-        # TODO(hamaji): Revive shape inference.
-        self.fwd = fwd_graph.compile(skip_inference=True)
-        self.bwd = bwd_graph.compile(skip_inference=True)
+        if self.backprop_two_phase:
+            self.bwd_input_names = bwd_graph.input_names()
+            self.bwd_output_names = bwd_graph.output_names()
+            # TODO(hamaji): Revive shape inference.
+            self.fwd = fwd_graph.compile(skip_inference=True)
+            self.bwd = bwd_graph.compile(skip_inference=True)
+        else:
+            self.fwd_bwd = fwd_graph.compile(backprop=True,
+                                             skip_inference=True)
         self.param_names = fwd_graph.param_names()
 
         self.compiled = True
@@ -240,7 +345,10 @@ class CompiledModel(chainer.Chain):
 
         inputs = list(args)
         flat_inputs = _flatten(inputs)
-        runner = RunCompiledModel(self, inputs)
+        if self.backprop_two_phase:
+            runner = RunCompiledModelTwoPhase(self, inputs)
+        else:
+            runner = RunCompiledModelOnePhase(self, inputs)
         outputs = runner.apply(flat_inputs + self.param_values)
         outputs = runner.unflatten_outputs(outputs)
         outputs = outputs[:len(self.orig_output_names)]

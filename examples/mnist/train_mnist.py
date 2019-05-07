@@ -96,9 +96,11 @@ def main():
     # Classifier reports softmax cross entropy loss and accuracy at every
     # iteration, which will be used by the PrintReport extension below.
     mlp = MLP(args.unit, 10)
-    if args.compile:
-        mlp = chainer_compiler.compile(mlp, dump_onnx=args.dump_onnx)
     model = L.Classifier(mlp)
+    if args.compile:
+        model = chainer_compiler.compile(model, dump_onnx=args.dump_onnx,
+                                         translator='onnx_chainer',
+                                         backprop_two_phase=True)
     model.to_device(device)
     device.use()
 
