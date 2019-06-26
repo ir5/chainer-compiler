@@ -229,6 +229,7 @@ std::map<std::string, VarPtr> Run(
         bool training,
         bool check_nans,
         bool check_infs,
+        bool check_types,
         bool dump_memory_usage,
         const std::string& chrome_tracing,
         const std::map<std::string, py::function>& custom_funcs) {
@@ -238,6 +239,7 @@ std::map<std::string, VarPtr> Run(
     chxvm_opts.is_training = training;
     chxvm_opts.check_nans = check_nans;
     chxvm_opts.check_infs = check_infs;
+    chxvm_opts.check_types = check_types;
     chxvm_opts.dump_memory_usage = dump_memory_usage;
     if (!chrome_tracing.empty()) {
         chxvm_opts.chrome_tracing = new runtime::ChromeTracingEmitter();
@@ -285,6 +287,7 @@ void InitChxVM(py::module& m) {
           "training"_a = false,
           "check_nans"_a = false,
           "check_infs"_a = false,
+          "check_types"_a = false,
           "dump_memory_usage"_a = false,
           "chrome_tracing"_a = "",
           "custom_funcs"_a = py::dict());
