@@ -185,15 +185,18 @@ class RunCompiledModel(chainer.function_node.FunctionNode):
 def _run_translator(translator, mc, inputs):
     if translator == 'ch2o':
         from chainer_compiler import ch2o
+        mc(*inputs)
         xmodel = ch2o.compile_model(mc, inputs)
         f = tempfile.NamedTemporaryFile(delete=False)
         f.write(xmodel.SerializeToString())
         f.close()
         del xmodel
     elif translator == 'onnx_chainer':
+        # make an input with batch-size one for memory efficient export
+        inputs_bs1 = tuple(v[:1] for v in inputs)
         import onnx_chainer
         f = tempfile.NamedTemporaryFile(delete=False)
-        onnx_chainer.export(mc, inputs, filename=f)
+        onnx_chainer.export(mc, inputs_bs1, filename=f)
         f.close()
     else:
         raise NotImplementedError('Unsupported translator:',
@@ -305,9 +308,7 @@ class CompiledModel(chainer.Chain):
 
     def forward(self, *args):
         if not self.compiled:
-            outputs = self.mc(*args)
             self.compile(args)
-            return outputs
 
         inputs = list(args)
         flat_inputs = _flatten(inputs)
