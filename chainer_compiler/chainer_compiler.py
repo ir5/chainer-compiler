@@ -1,4 +1,5 @@
 import chainer
+import chainerx
 import os
 import sys
 import tempfile
@@ -323,3 +324,9 @@ class CompiledModel(chainer.Chain):
 
 def compile(model, inputs=None, **kwargs):
     return CompiledModel(model, inputs, **kwargs)
+
+
+def init_allocator():
+    if cupy is None:
+        return
+    chainerx._cuda.cupy_share_allocator()

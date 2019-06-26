@@ -83,6 +83,7 @@ def main():
                         help='Use unified memory for large model')
     args = parser.parse_args()
 
+    chainer_compiler.init_allocator()
     device = chainer.get_device(args.device)
 
     print('Device: {}'.format(device))
