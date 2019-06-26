@@ -134,8 +134,8 @@ InOuts ChxVM::Run(const InOuts& program_inputs, const ChxVMOptions& options) {
                 continue;
             }
             if (options.check_types) {
-              CHECK_EQ(input->dtype, a.dtype()) << "Input '" << input->name << "' has an unexpected dtype";
-              CHECK_EQ(input->shape, a.shape()) << "Input '" << input->name << "' has an unexpected shape";
+                CHECK_EQ(input->dtype, a.dtype()) << "Input '" << input->name << "' has an unexpected dtype";
+                CHECK_EQ(input->shape, a.shape()) << "Input '" << input->name << "' has an unexpected shape";
             }
         } else {
             CHECK_EQ(static_cast<int>(input->dtype), 0) << "Input '" << input->name << "' must be a tensor";
